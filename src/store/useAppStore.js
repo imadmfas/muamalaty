@@ -10,7 +10,7 @@ const FAVORITES_KEY = '@muamalaty_favorites';
 const SEARCHES_KEY = '@muamalaty_searches';
 const EXPIRIES_KEY = '@muamalaty_expiries';
 const LOCATION_KEY = '@muamalaty_location'; // inlined literal in the original
-// SecurityService.setSecureItem (RC4-encrypted JSON, still stored in AsyncStorage)
+// SecurityService.setSecureItem (AES-256-GCM encrypted JSON in AsyncStorage since v1.1.0)
 const SEC_HEAD_KEY = '@muamalaty_sec_head';
 const SEC_MEMBERS_KEY = '@muamalaty_sec_members';
 const SEC_USER_KEY = '@muamalaty_sec_user';
@@ -27,9 +27,12 @@ export const useAppStore = create((set, get) => ({
   vehicleAnnualExpiry: null,
   rationCardUpdate: null,
   notificationsEnabled: true,
-  pinLockEnabled: true,
+  // v1.1.0: no lock until the user actually creates a PIN (v1.0.0 started locked
+  // with a hard-coded test PIN 1234 printed on the lock screen).
+  pinLockEnabled: false,
   biometricLockEnabled: false,
-  isLocked: true,
+  isLocked: false,
+  isHydrated: false,
   currentUser: null,
   childVaccines: [],
   chronicMedications: [],
@@ -141,7 +144,7 @@ export const useAppStore = create((set, get) => ({
         'جواز سفر الـ (' + member.relationship + ') البطل ' + member.name + ' سينتهي قريباً. يرجى تجهيز البطاقة الوطنية وحجز موعد تجديد الجواز.',
         member.passportExpiryDate
       );
-      await NotificationService.scheduleSchoolAgeNotification(member.id, member.name, member.birthDate);
+      await NotificationService.scheduleSchoolAgeNotification(member.id, member.name, member.birthDate, member.relationship);
     }
   },
 
@@ -189,6 +192,8 @@ export const useAppStore = create((set, get) => ({
 
   setNotificationsEnabled: async (enabled) => {
     set({ notificationsEnabled: enabled });
+    // v1.1.0: switching reminders off now cancels the ones already scheduled.
+    if (!enabled) await NotificationService.cancelAllNotifications();
     await AsyncStorage.setItem(
       PREFS_KEY,
       JSON.stringify({
@@ -340,20 +345,23 @@ export const useAppStore = create((set, get) => ({
 
     if (!get().notificationsEnabled) return;
 
+    // v1.1.0: medication reminders repeat every day (v1.0.0 fired only once).
     const tenMinBefore = getMedDate(time, 10);
-    await NotificationService.scheduleCustomNotification(
+    await NotificationService.scheduleDailyNotification(
       'med_' + id + '_10',
       '🕒 تذكير بأخذ العلاج (متبقي 10 دقائق)',
       'عيني، حان وقت أخذ علاجك [' + medName + '] الخاص بـ [' + diseaseName + '] بعد 10 دقائق فدوة.',
-      tenMinBefore
+      tenMinBefore.getHours(),
+      tenMinBefore.getMinutes()
     );
 
     const exactTime = getMedDate(time, 0);
-    await NotificationService.scheduleCustomNotification(
+    await NotificationService.scheduleDailyNotification(
       'med_' + id + '_0',
       '💊 حان الآن موعد أخذ العلاج!',
       'عيني، حان الآن الوقت المحدد تماماً لأخذ علاجك [' + medName + '] لـ [' + diseaseName + ']. يرجى تناوله بالصحة والعافية فدوة.',
-      exactTime
+      exactTime.getHours(),
+      exactTime.getMinutes()
     );
   },
 
@@ -370,12 +378,16 @@ export const useAppStore = create((set, get) => ({
       const prefsStr = await AsyncStorage.getItem(PREFS_KEY);
       if (prefsStr) {
         const prefs = JSON.parse(prefsStr);
+        // A lock is only honoured when a PIN really exists (it is also the biometric fallback).
+        const pinExists = await SecurityService.hasPIN();
+        const pinLock = !!prefs.pinLockEnabled && pinExists;
+        const bioLock = !!prefs.biometricLockEnabled && pinExists;
         set({
           isDarkMode: !!prefs.isDarkMode,
           notificationsEnabled: prefs.notificationsEnabled !== undefined ? prefs.notificationsEnabled : true,
-          pinLockEnabled: !!prefs.pinLockEnabled,
-          biometricLockEnabled: !!prefs.biometricLockEnabled,
-          isLocked: !!prefs.pinLockEnabled || !!prefs.biometricLockEnabled,
+          pinLockEnabled: pinLock,
+          biometricLockEnabled: bioLock,
+          isLocked: pinLock || bioLock,
         });
       }
 
@@ -420,10 +432,15 @@ export const useAppStore = create((set, get) => ({
       }
     } catch (error) {
       console.error('Failed to load persisted app data', error);
+    } finally {
+      set({ isHydrated: true });
     }
   },
 
   clearAllData: async () => {
+    // v1.1.0: also wipe the PIN, the encryption key and every scheduled reminder.
+    await NotificationService.cancelAllNotifications();
+    await SecurityService.wipeSecrets();
     await AsyncStorage.clear();
     set({
       isDarkMode: false,
@@ -443,6 +460,7 @@ export const useAppStore = create((set, get) => ({
       chronicMedications: [],
       selectedGovernorate: 'بغداد',
       selectedDistrict: 'الرصافة',
+      isHydrated: true,
     });
   },
 }));

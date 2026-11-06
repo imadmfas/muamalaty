@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -14,6 +14,7 @@ import { useAppStore } from '../store/useAppStore';
 import { useTheme } from '../theme/ThemeContext';
 import * as securityService from '../services/securityService';
 import { GlassCard } from '../components/GlassCard';
+import { PinPromptModal } from '../components/PinPromptModal';
 
 export const SettingsScreen = ({ onOpenAdmin }) => {
   // themeConfig is destructured in the original but never used.
@@ -27,6 +28,12 @@ export const SettingsScreen = ({ onOpenAdmin }) => {
     clearAllData,
   } = useAppStore();
 
+  const [pinDialog, setPinDialog] = useState(null); // 'create' | 'verify' | null
+  const [bioAvailable, setBioAvailable] = useState(false);
+  useEffect(() => {
+    securityService.isBiometricAvailable().then(setBioAvailable);
+  }, []);
+
   const cardBackground = theme.cardMain;
   const borderColor = theme.border;
   const textPrimaryStyle = { color: theme.textPrimary };
@@ -34,6 +41,11 @@ export const SettingsScreen = ({ onOpenAdmin }) => {
 
   const handleBiometricToggle = async (value) => {
     if (value) {
+      // v1.1.0: the PIN is the fallback for the fingerprint lock, so one must exist first.
+      if (!(await securityService.hasPIN())) {
+        Alert.alert('أنشئ رمز PIN أولاً', 'فعّل القفل برمز PIN أولاً ليكون بديلاً عند تعذر قراءة البصمة.');
+        return;
+      }
       const success = await securityService.authenticateBiometric();
       if (success) {
         await setSecurityEnabled(pinLockEnabled, true);
@@ -42,24 +54,40 @@ export const SettingsScreen = ({ onOpenAdmin }) => {
         Alert.alert('فشل التفعيل', 'لم نتمكن من التحقق من البصمة البيومترية لجهازك.');
       }
     } else {
-      await setSecurityEnabled(pinLockEnabled, false);
+      const ok = await securityService.authenticateBiometric();
+      if (ok) await setSecurityEnabled(pinLockEnabled, false);
+      else setPinDialog('verify-bio');
     }
   };
 
+  // v1.1.0: switching the lock on asks the user to choose a PIN; switching it off
+  // asks for the current PIN (v1.0.0 used a hard-coded "1234" and asked nothing).
   const handlePinToggle = async (value) => {
-    if (value) {
+    setPinDialog(value ? 'create' : 'verify');
+  };
+
+  const onPinDone = async (pin) => {
+    if (pinDialog === 'create') {
+      await securityService.savePIN(pin);
       await setSecurityEnabled(true, biometricLockEnabled);
-      Alert.alert(
-        'تفعيل PIN',
-        'تم تفعيل القفل برمز PIN الافتراضي: 1234. يمكنك استخدامه كبديل للقفل البيومتري.'
-      );
-    } else {
-      await setSecurityEnabled(false, biometricLockEnabled);
+      setPinDialog(null);
+      Alert.alert('تم تفعيل القفل', 'سيُطلب رمز الـ PIN عند كل فتح للتطبيق. احفظ الرمز في مكان آمن.');
+      return true;
     }
+    const ok = await securityService.verifyPIN(pin);
+    if (!ok) return false;
+    if (pinDialog === 'verify-bio') {
+      await setSecurityEnabled(pinLockEnabled, false);
+    } else {
+      await securityService.deletePIN();
+      await setSecurityEnabled(false, false);
+    }
+    setPinDialog(null);
+    return true;
   };
 
   const openDeveloperEmail = () => {
-    Linking.openURL('mailto:info@drimad.net?subject=تطبيق معاملاتي');
+    Linking.openURL('mailto:info@drimad.net?subject=' + encodeURIComponent('تطبيق معاملاتي'));
   };
 
   const handleResetData = () => {
@@ -117,6 +145,7 @@ export const SettingsScreen = ({ onOpenAdmin }) => {
           <View style={[styles.settingRow, { borderBottomColor: theme.divider }]}>
             <Switch
               value={biometricLockEnabled}
+              disabled={!bioAvailable && !biometricLockEnabled}
               onValueChange={handleBiometricToggle}
               trackColor={{ false: theme.textMuted, true: theme.primaryBrand }}
               thumbColor={biometricLockEnabled ? theme.primaryBrand : theme.cardElevated}
@@ -124,7 +153,7 @@ export const SettingsScreen = ({ onOpenAdmin }) => {
             <View style={styles.settingMeta}>
               <Text style={[styles.settingLabel, textPrimaryStyle]}>القفل البيومتري (البصمة/الوجه)</Text>
               <Text style={[styles.settingSub, textSecondaryStyle]}>
-                تأمين الدخول بحماية الجوال البيومترية
+                {bioAvailable ? 'تأمين الدخول بحماية الجوال البيومترية' : 'غير متاح على هذا الجهاز أو في نسخة المتصفح'}
               </Text>
             </View>
           </View>
@@ -138,7 +167,7 @@ export const SettingsScreen = ({ onOpenAdmin }) => {
             <View style={styles.settingMeta}>
               <Text style={[styles.settingLabel, textPrimaryStyle]}>القفل برمز PIN</Text>
               <Text style={[styles.settingSub, textSecondaryStyle]}>
-                استخدام كود حماية إضافي (الافتراضي: 1234)
+                {pinLockEnabled ? 'مفعّل — يُطلب الرمز عند فتح التطبيق' : 'اختر رمزاً من 4 أرقام لحماية بياناتك'}
               </Text>
             </View>
           </View>
@@ -199,6 +228,13 @@ export const SettingsScreen = ({ onOpenAdmin }) => {
 
         <View style={{ height: 180 }} />
       </ScrollView>
+      <PinPromptModal
+        visible={!!pinDialog}
+        mode={pinDialog === 'create' ? 'create' : 'verify'}
+        title={pinDialog === 'create' ? 'إنشاء رمز PIN' : 'تأكيد الهوية'}
+        onCancel={() => setPinDialog(null)}
+        onDone={onPinDone}
+      />
     </View>
   );
 };

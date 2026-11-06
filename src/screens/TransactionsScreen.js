@@ -23,7 +23,8 @@ import { TransactionDetailModal } from '../components/TransactionDetailModal';
 export const TransactionsScreen = ({ onAskAI }) => {
   const { theme, isDarkMode, toggleDarkMode, themeConfig } = useTheme();
 
-  const [activeTab, setActiveTab] = useState('track');
+  // v1.1.0: open on the real services guide; the tracking tab only has demo items.
+  const [activeTab, setActiveTab] = useState('guide');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState(null);
   const [selectedService, setSelectedService] = useState(null);
@@ -271,6 +272,14 @@ export const TransactionsScreen = ({ onAskAI }) => {
           <View style={styles.screenHeader}>
             <Text style={[styles.headerSubtitle, subTextStyle]}>
               تتبع حالة معاملاتك الحكومية المفتوحة والمنتهية
+            </Text>
+          </View>
+
+          {/* v1.1.0: these items are hard-coded examples (no government tracking API exists
+              yet); v1.0.0 showed them as if they were the user's own transactions. */}
+          <View style={[styles.demoBanner, { borderColor: theme.warning, backgroundColor: theme.warning + '14' }]}>
+            <Text style={[styles.demoBannerText, { color: theme.warning }]}>
+              عرض توضيحي: تتبّع المعاملات الحقيقية يحتاج ربطاً مع الأنظمة الحكومية ولم يُفعَّل بعد. البطاقات أدناه أمثلة لشكل الخدمة المرتقبة.
             </Text>
           </View>
 
@@ -527,6 +536,8 @@ export const TransactionsScreen = ({ onAskAI }) => {
 };
 
 const styles = StyleSheet.create({
+  demoBanner: { borderWidth: 1, borderRadius: 12, padding: 10, marginBottom: 12 },
+  demoBannerText: { fontSize: 11.5, textAlign: 'right', lineHeight: 18, fontWeight: 'bold' },
   container: { flex: 1 },
   absoluteGlowContainer: {
     position: 'absolute',

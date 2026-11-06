@@ -1,12 +1,16 @@
 // Reconstructed from Hermes module 723 (decompiled.js lines 275865–277519).
-// "Verification" layer: connectivity probe, AsyncStorage cache, update log, conflict resolution
-// and a SIMULATED online verification (hard-coded updates after a 1.5 s delay).
+// Verification layer: connectivity probe, AsyncStorage cache, update log, conflict resolution.
+// v1.1.0: verifyServiceDetails no longer pretends to fetch from government portals — see below.
+import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+// v1.1.0: on the web a cross-origin HEAD request is blocked by CORS and always looked
+// "offline"; the browser's own online flag is used there instead. Native keeps the probe.
 export const checkInternetConnection = async () => {
+  if (Platform.OS === 'web') return typeof navigator === 'undefined' ? true : navigator.onLine !== false;
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 2000);
+    const timeoutId = setTimeout(() => controller.abort(), 2500);
     const response = await fetch('https://eservice.ur.gov.iq', {
       method: 'HEAD',
       signal: controller.signal,
@@ -17,7 +21,7 @@ export const checkInternetConnection = async () => {
   } catch (error) {
     try {
       const fallbackController = new AbortController();
-      const fallbackTimeoutId = setTimeout(() => fallbackController.abort(), 1500);
+      const fallbackTimeoutId = setTimeout(() => fallbackController.abort(), 2000);
       const fallbackResponse = await fetch('https://www.google.com', {
         method: 'HEAD',
         signal: fallbackController.signal,
@@ -71,6 +75,7 @@ export const addUpdateLog = async (log) => {
 
 export const calculateFreshnessScore = (lastVerifiedDate) => {
   const verified = new Date(lastVerifiedDate);
+  if (Number.isNaN(verified.getTime())) return 50;
   const now = new Date();
   const diffDays = Math.ceil(Math.abs(now.getTime() - verified.getTime()) / 86400000);
   const penalty = Math.min(50, diffDays * 0.1);
@@ -81,7 +86,7 @@ export const resolveConflict = (currentData, incomingData, sourceType) => {
   const resolvedConflicts = [];
   const merged = { ...currentData };
 
-  const incomingPriority = { official: 3, portal: 2, web: 1, local: 0 }[sourceType];
+  const incomingPriority = { official: 3, portal: 2, web: 1, verified_web: 1, local: 0 }[sourceType] ?? 0;
   const currentPriority =
     currentData.verification_status === 'official'
       ? 3
@@ -124,98 +129,55 @@ export const resolveConflict = (currentData, incomingData, sourceType) => {
   return { merged, resolvedConflicts };
 };
 
+// Curated corrections maintained by the author (were hard-coded in v1.0.0 as a fake
+// "online update"; the ration-card id was misspelled there so it never applied).
+const CURATED_UPDATES = {
+  moi_issue_passport: {
+    estimated_fees_iqd: 25000,
+    online_service_link: 'https://eservice.ur.gov.iq/index/service-details/10043',
+    expected_processing_time: 'من 2 إلى 5 أيام عمل (محدثة إلكترونياً)',
+  },
+  mot_ration_card_add_child: {
+    online_service_link: 'https://eservice.ur.gov.iq/index/service-details/10048',
+    expected_processing_time: 'من 2 إلى 4 أيام عمل عبر تطبيق تمويني الذكي',
+  },
+};
+
+const SOURCE_TYPE = {
+  official: 'official_sources',
+  portal: 'government_portals',
+  verified_web: 'verified_web',
+};
+
+// v1.1.0 — honest verification. The app has no live government API, so v1.0.0's
+// "pulling from official portals" step (a 1.5 s sleep, then every service relabelled
+// "official"/"portal"/"verified_web" with 98/92/80 and cached forever) is gone. The
+// result is now the built-in record plus the author's curated corrections, and the
+// confidence is the record's own verification score, reduced as its check date ages.
 export const verifyServiceDetails = async (service, isOnline) => {
-  const today = new Date().toISOString().split('T')[0];
-  const cached = await getCachedService(service.service_id);
-
-  if (!isOnline) {
-    const data = cached || service;
-    const freshnessScore = calculateFreshnessScore(data.last_verified_date);
-    const confidenceScore = Math.max(50, Math.min(74, data.verification_score));
-    return {
-      service: data,
-      sourceType: cached ? 'cached_verified' : 'local_database',
-      confidenceScore,
-      isFresh: freshnessScore > 85,
-      isOffline: true,
-      lastChecked: data.last_verified_date,
-      freshnessScore,
-    };
-  }
-
-  if (cached && cached.last_verified_date === today) {
-    const freshnessScore = calculateFreshnessScore(cached.last_verified_date);
-    return {
-      service: cached,
-      sourceType: 'cached_verified',
-      confidenceScore: cached.verification_score,
-      isFresh: true,
-      isOffline: false,
-      lastChecked: cached.last_verified_date,
-      freshnessScore,
-    };
-  }
-
-  // Simulated network latency (no real request is made).
-  await new Promise((resolve) => setTimeout(resolve, 1500));
-
-  let updates = {};
-  let sourceType = 'portal';
-  if (service.service_id === 'moi_issue_passport') {
-    updates = {
-      estimated_fees_iqd: 25000,
-      online_service_link: 'https://eservice.ur.gov.iq/index/service-details/10043',
-      expected_processing_time: 'من 2 إلى 5 أيام عمل (محدثة إلكترونياً)',
-    };
-    sourceType = 'official';
-  } else if (service.service_id === 'mot_ration_add_child') {
-    updates = {
-      online_service_link: 'https://eservice.ur.gov.iq/index/service-details/10048',
-      expected_processing_time: 'من 2 إلى 4 أيام عمل عبر تطبيق تمويني الذكي',
-    };
-    sourceType = 'portal';
-  } else {
-    updates = { working_hours: 'من الساعة 8:00 صباحاً وحتى 2:30 ظهراً (توقيت صيفي معتمد)' };
-    sourceType = 'web';
-  }
-
-  const { merged, resolvedConflicts } = resolveConflict(cached || service, updates, sourceType);
-  merged.last_verified_date = today;
-  merged.last_source_check = today;
-
-  let confidenceScore = 74;
-  if (sourceType === 'official') {
-    confidenceScore = 98;
-    merged.verification_status = 'official';
-  } else if (sourceType === 'portal') {
-    confidenceScore = 92;
-    merged.verification_status = 'portal';
-  } else {
-    confidenceScore = 80;
-    merged.verification_status = 'verified_web';
-  }
-  merged.verification_score = confidenceScore;
-
-  await saveCachedService(merged);
+  const data = { ...service, ...(CURATED_UPDATES[service.service_id] || {}) };
+  const freshnessScore = calculateFreshnessScore(data.last_verified_date);
+  const baseScore = typeof data.verification_score === 'number' ? data.verification_score : 60;
+  const confidenceScore = Math.max(0, Math.min(baseScore, freshnessScore));
 
   await addUpdateLog({
     timestamp: new Date().toISOString(),
     serviceId: service.service_id,
-    sourceType,
-    resolvedConflicts:
-      resolvedConflicts.length > 0 ? resolvedConflicts : ['لا يوجد تعارض، البيانات متطابقة'],
-    freshnessScore: 100,
+    sourceType: data.verification_status || 'local',
+    resolvedConflicts: CURATED_UPDATES[service.service_id]
+      ? ['طُبّقت تصحيحات المؤلف المعتمدة على بيانات الخدمة']
+      : ['لا توجد تصحيحات، البيانات كما في قاعدة التطبيق'],
+    freshnessScore,
   });
 
   return {
-    service: merged,
-    sourceType:
-      sourceType === 'official' ? 'official_sources' : sourceType === 'portal' ? 'government_portals' : 'verified_web',
+    service: data,
+    sourceType: SOURCE_TYPE[data.verification_status] || 'local_database',
     confidenceScore,
-    isFresh: true,
-    isOffline: false,
-    lastChecked: today,
-    freshnessScore: 100,
+    isFresh: freshnessScore > 85,
+    isOffline: !isOnline,
+    lastChecked: data.last_verified_date,
+    freshnessScore,
   };
 };
 

@@ -29,7 +29,9 @@ export const TransactionDetailModal = ({ service, visible, onClose, onAskAI }) =
   // Second, un-selected subscription to the whole store (fed into the engine).
   const storeState = useAppStore();
 
-  const todayStr = React.useMemo(() => new Date().toISOString().split('T')[0], []);
+  // v1.1.0: local (Baghdad) date, not UTC, and recomputed on every open.
+  const d = new Date();
+  const todayStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
   const engineResult = React.useMemo(() => {
     try {
@@ -67,22 +69,12 @@ export const TransactionDetailModal = ({ service, visible, onClose, onAskAI }) =
     }
   };
 
+  // v1.1.0: v1.0.0 announced "تمت الإضافة بنجاح" but saved nothing. Expiry reminders are
+  // set from the profile's documents page, so the button now says exactly that.
   const handleAddDocToReminders = (doc) => {
     Alert.alert(
-      'حفظ في مستمسكاتي 🔒',
-      `هل ترغب بإضافة [${doc}] إلى قائمة مستمسكاتك الآمنة لجدولة تنبيه بانتهاء صلاحيتها؟`,
-      [
-        { text: 'إلغاء', style: 'cancel' },
-        {
-          text: 'نعم، إضافة',
-          onPress: () => {
-            Alert.alert(
-              'نجاح',
-              "تمت الإضافة بنجاح! يرجى مراجعة صفحة 'مستمسكاتي' في تبويب حسابي لضبط تاريخ الانتهاء."
-            );
-          },
-        },
-      ]
+      'تذكير بانتهاء المستمسك 🔒',
+      `لضبط تنبيه بانتهاء [${doc}]: افتح تبويب «حسابي» ثم «مستمسكاتي»، وأدخل تاريخ الانتهاء. سيصلك تذكير قبل الانتهاء بـ 30 يوماً.`
     );
   };
 
@@ -118,7 +110,7 @@ export const TransactionDetailModal = ({ service, visible, onClose, onAskAI }) =
 
   const handleTriggerAI = () => {
     onClose();
-    onAskAI(
+    onAskAI && onAskAI(
       `أريد معلومات كاملة وخطوات تقديم معاملة: ${service.service_name_ar} التابعة لـ ${service.ministry_name} بالتفصيل.`
     );
   };
@@ -228,7 +220,7 @@ export const TransactionDetailModal = ({ service, visible, onClose, onAskAI }) =
                   <Text style={[styles.statVal, { color: theme.primaryBrand }]}>
                     {service.estimated_fees_iqd === 0
                       ? 'مجانية'
-                      : `${service.estimated_fees_iqd.toLocaleString()} د.ع`}
+                      : `${Number(service.estimated_fees_iqd || 0).toLocaleString("en-US")} د.ع`}
                   </Text>
                 </View>
                 <View style={[styles.statDivider, { backgroundColor: theme.divider }]} />
@@ -423,7 +415,7 @@ export const TransactionDetailModal = ({ service, visible, onClose, onAskAI }) =
                             <Text style={[styles.stepDescText, subTextStyle]}>
                               {'دفع الرسوم البالغة '}
                               {service.estimated_fees_iqd > 0
-                                ? `${service.estimated_fees_iqd.toLocaleString()} د.ع`
+                                ? `${Number(service.estimated_fees_iqd || 0).toLocaleString("en-US")} د.ع`
                                 : 'مجانية'}
                               {' عبر '}
                               {service.payment_method}
@@ -531,7 +523,7 @@ export const TransactionDetailModal = ({ service, visible, onClose, onAskAI }) =
               </View>
             </View>
 
-            {service.citizen_notes && (
+            {!!service.citizen_notes && (
               <GlassCard
                 borderColor={warningBorder}
                 style={[styles.tipsCard, { backgroundColor: warningBg }]}

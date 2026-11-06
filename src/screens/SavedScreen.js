@@ -8,6 +8,7 @@ import {
   ScrollView,
   Alert,
   Share,
+  Platform,
 } from 'react-native';
 import { useAppStore } from '../store/useAppStore';
 import { useTheme } from '../theme/ThemeContext';
@@ -27,26 +28,36 @@ export const SavedScreen = () => {
 
   const handleShare = async (service) => {
     try {
-      const docsList = service.required_documents
+      const docsList = (service.required_documents || [])
         .map((doc, index) => `${index + 1}. ${doc}`)
         .join('\n');
       const message = `
 *تطبيق معاملاتي - دليل المعاملات الحكومية*
 الخدمة: ${service.service_name_ar}
 الوزارة: ${service.ministry_name} - ${service.department_name}
-الرسوم التقريبية: ${service.estimated_fees_iqd.toLocaleString()} دينار عراقي
+الرسوم التقريبية: ${Number(service.estimated_fees_iqd || 0).toLocaleString("en-US")} دينار عراقي
 المستمسكات المطلوبة:
 ${docsList}
 
 حالة التحقق: ${getConfidenceText(service.verification_score)}
 البرنامج إرشادي وليس حكومياً رسمياً.
     `;
+      // v1.1.0: browsers without the Web Share API get the text copied instead.
+      if (Platform.OS === 'web' && !navigator.share) {
+        await navigator.clipboard.writeText(message.trim());
+        Alert.alert('تم النسخ', 'نُسخت تفاصيل المعاملة، يمكنك لصقها في واتساب أو أي تطبيق.');
+        return;
+      }
+      if (Platform.OS === 'web') {
+        await navigator.share({ title: service.service_name_ar, text: message.trim() });
+        return;
+      }
       await Share.share({
         message,
         title: service.service_name_ar,
       });
     } catch (error) {
-      Alert.alert('خطأ', 'فشل مشاركة البيانات');
+      if (error?.name !== 'AbortError') Alert.alert('خطأ', 'فشل مشاركة البيانات');
     }
   };
 
@@ -116,7 +127,7 @@ ${docsList}
               </Text>
               <Text style={[styles.feeText, textPrimaryStyle]}>
                 {selectedService.estimated_fees_iqd > 0
-                  ? `${selectedService.estimated_fees_iqd.toLocaleString()} دينار عراقي`
+                  ? `${Number(selectedService.estimated_fees_iqd || 0).toLocaleString("en-US")} دينار عراقي`
                   : 'مجانية'}
               </Text>
               <Text style={[styles.paymentMethod, textSecondaryStyle]}>
@@ -140,7 +151,7 @@ ${docsList}
               </Text>
             </View>
 
-            {selectedService.citizen_notes && (
+            {!!selectedService.citizen_notes && (
               <View
                 style={[
                   styles.notesBox,
@@ -234,7 +245,7 @@ ${docsList}
                   <Text style={[styles.savedCardFee, { color: theme.success }]}>
                     🪙{' '}
                     {item.estimated_fees_iqd > 0
-                      ? `${item.estimated_fees_iqd.toLocaleString()} د.ع`
+                      ? `${Number(item.estimated_fees_iqd || 0).toLocaleString("en-US")} د.ع`
                       : 'مجاني'}
                   </Text>
                 </View>

@@ -8,7 +8,7 @@ const base = '/muamalaty/';
 const indexPath = path.join(dist, 'index.html');
 let html = fs.readFileSync(indexPath, 'utf8');
 
-html = html.replace(/<html[^>]*>/, '<html lang="ar" dir="rtl">');
+html = html.replace(/<html[^>]*>/, '<html lang="ar">');
 const head = [
   '<meta name="theme-color" content="#0A0C10">',
   '<meta name="description" content="معاملاتي — دليلك الذكي لإنجاز المعاملات الحكومية العراقية: المستمسكات المطلوبة، الخطوات، الرسوم، والتذكير بمواعيد انتهاء الوثائق.">',

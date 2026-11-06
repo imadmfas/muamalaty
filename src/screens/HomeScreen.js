@@ -79,20 +79,22 @@ export const HomeScreen = ({ onSearchSubmit, onQuickSelect, onSwitchTab }) => {
     setSearchQuery('');
   };
 
-  // OTP is generated locally and displayed in an Alert; nothing is actually sent.
-  const handleRequestOtp = () => {
-    if (phoneNumber.length === 9 && !isNaN(Number(phoneNumber))) {
+  // v1.1.0: v1.0.0 claimed to send a WhatsApp code but generated it on the phone and
+  // showed it in the same alert, so it verified nothing. There is no server, so the profile
+  // is now saved directly and the screen says plainly that it stays on this device.
+  const handleRequestOtp = async () => {
+    const digits = phoneNumber.replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)));
+    if (/^\d{9}$/.test(digits)) {
       if (!selectedGovernorate || !selectedDistrict) {
         Alert.alert('خطأ', 'يرجى اختيار المحافظة والقضاء');
         return;
       }
-      const code = Math.floor(1000 + Math.random() * 9000).toString();
-      setGeneratedOtp(code);
-      setOtpSent(true);
-      Alert.alert(
-        '💬 تفعيل حساب المواطن (WhatsApp)',
-        `تم إرسال كود التفعيل إلى حساب الواتساب الخاص بالرقم 07${phoneNumber} بنجاح!\n\nكود التفعيل الخاص بك هو: ${code}`
-      );
+      await registerUser(digits, selectedGovernorate, selectedDistrict);
+      Alert.alert('تم الحفظ', `أهلاً بك! حُفظ ملفك (${selectedGovernorate} - ${selectedDistrict}) مشفّراً على هذا الجهاز فقط.`);
+      setShowLoginModal(false);
+      setPhoneNumber('');
+      setSelectedGovernorate('');
+      setSelectedDistrict('');
       return;
     }
     Alert.alert('خطأ', 'يرجى إدخال رقم هاتف محمول عراقي صحيح (9 أرقام بعد 07)');
@@ -157,7 +159,7 @@ export const HomeScreen = ({ onSearchSubmit, onQuickSelect, onSwitchTab }) => {
               ]}
               onPress={() => setShowLoginModal(true)}
             >
-              <Feather name="maximize" size={16} color={theme.textSecondary} />
+              <Feather name="user" size={16} color={theme.textSecondary} />
             </TouchableOpacity>
           </View>
 
@@ -165,7 +167,7 @@ export const HomeScreen = ({ onSearchSubmit, onQuickSelect, onSwitchTab }) => {
             <View style={styles.profileTextWrapper}>
               <Text style={[styles.welcomeSubtitle, textSecondaryStyle]}>كيف يمكنني مساعدتك اليوم؟</Text>
               <Text style={[styles.welcomeTitle, textPrimaryStyle]}>
-                مرحباً، {currentUser ? `07${currentUser.phone}` : 'أحمد'}
+                {currentUser ? `مرحباً، 07${currentUser.phone}` : 'مرحباً بك'}
               </Text>
             </View>
             <View
@@ -336,13 +338,13 @@ export const HomeScreen = ({ onSearchSubmit, onQuickSelect, onSwitchTab }) => {
               <TouchableOpacity onPress={() => setShowLoginModal(false)} style={styles.closeModalBtn}>
                 <Ionicons name="close" size={22} color={theme.textPrimary} />
               </TouchableOpacity>
-              <Text style={[styles.modalTitleText, textPrimaryStyle]}>🔒 تفعيل حساب المواطن</Text>
+              <Text style={[styles.modalTitleText, textPrimaryStyle]}>👤 ملفي الشخصي</Text>
             </View>
 
             {!otpSent ? (
               <ScrollView contentContainerStyle={styles.modalFormScroll} showsVerticalScrollIndicator={false}>
                 <Text style={[styles.modalSubText, { color: theme.textSecondary }]}>
-                  يرجى إدخال رقم هاتفك المحمول عدا الصفر وتحديد موقعك الجغرافي لتخصيص معاملاتك.
+                  أدخل رقم هاتفك (بلا 07) وحدد محافظتك وقضاءك لتخصيص معاملاتك. تُحفظ البيانات مشفّرة على جهازك ولا تُرسل إلى أي جهة.
                 </Text>
 
                 <View style={styles.formGroup}>
@@ -359,7 +361,7 @@ export const HomeScreen = ({ onSearchSubmit, onQuickSelect, onSwitchTab }) => {
                       maxLength={9}
                       value={phoneNumber}
                       onChangeText={setPhoneNumber}
-                      placeholder="7701234567"
+                      placeholder="701234567"
                       placeholderTextColor={theme.textMuted}
                       textAlign="center"
                     />
@@ -495,7 +497,7 @@ export const HomeScreen = ({ onSearchSubmit, onQuickSelect, onSwitchTab }) => {
                     style={styles.submitRegGrad}
                   >
                     <Text style={[styles.submitRegBtnText, { color: 'white' }]}>
-                      تفعيل الحساب مجاناً عبر الواتساب 💬
+                      حفظ ملفي على هذا الجهاز 💾
                     </Text>
                   </LinearGradient>
                 </TouchableOpacity>

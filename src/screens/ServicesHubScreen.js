@@ -1,11 +1,12 @@
 // Reconstructed from Hermes bundle module 733 (decompiled.js lines 285219–287181)
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Alert } from 'react-native';
 import { Feather, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAppStore } from '../store/useAppStore';
 import { useTheme } from '../theme/ThemeContext';
 import { GlassCard } from '../components/GlassCard';
+import { loadIndicators, formatUpdatedAt } from '../services/liveIndicators';
 
 export const ServicesHubScreen = ({ onAskAI }) => {
   const { theme, isDarkMode, toggleDarkMode, themeConfig } = useTheme();
@@ -13,6 +14,16 @@ export const ServicesHubScreen = ({ onAskAI }) => {
 
   const [expandedChildId, setExpandedChildId] = useState(null);
   const [activeFilter, setActiveFilter] = useState('all');
+  const [live, setLive] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    loadIndicators().then((d) => alive && setLive(d)).catch(() => alive && setLive({}));
+    return () => {
+      alive = false;
+    };
+  }, []);
+  const fmt = (n) => (typeof n === 'number' ? n.toLocaleString('en-US') : '—');
+  const updated = live?.at ? 'آخر تحديث: ' + formatUpdatedAt(live.at) : live ? 'تعذر التحديث، تحقق من الاتصال' : 'جاري التحديث...';
 
   const formatMedTime = (time) => {
     if (!time) return '';
@@ -99,18 +110,20 @@ export const ServicesHubScreen = ({ onAskAI }) => {
             <GlassCard borderColor={theme.border} style={[styles.indicatorCard, { backgroundColor: theme.cardMain }]}>
               <View style={styles.indicatorHeader}>
                 <Feather name="sun" size={16} color={theme.warning} />
-                <Text style={[styles.indicatorTitle, textSecondaryStyle]}>بغداد • مشمس</Text>
+                <Text style={[styles.indicatorTitle, textSecondaryStyle]}>
+                  بغداد{live?.weather?.desc ? ' • ' + live.weather.desc : ''}
+                </Text>
               </View>
-              <Text style={[styles.indicatorValue, textPrimaryStyle]}>41°م</Text>
-              <Text style={[styles.indicatorSub, textSecondaryStyle]}>آخر تحديث: قبل دقائق</Text>
+              <Text style={[styles.indicatorValue, textPrimaryStyle]}>{live?.weather ? live.weather.temp + '°م' : '—'}</Text>
+              <Text style={[styles.indicatorSub, textSecondaryStyle]}>{updated}</Text>
             </GlassCard>
             <GlassCard borderColor={theme.border} style={[styles.indicatorCard, { backgroundColor: theme.cardMain }]}>
               <View style={styles.indicatorHeader}>
                 <Feather name="trending-up" size={16} color={theme.success} />
-                <Text style={[styles.indicatorTitle, textSecondaryStyle]}>سعر الدولار</Text>
+                <Text style={[styles.indicatorTitle, textSecondaryStyle]}>سعر الدولار (مرجعي)</Text>
               </View>
-              <Text style={[styles.indicatorValue, { color: theme.success }]}>1,312 د.ع</Text>
-              <Text style={[styles.indicatorSub, { color: theme.success }]}>📈 +0.48% (تصاعدي)</Text>
+              <Text style={[styles.indicatorValue, { color: theme.success }]}>{live?.usdIqd ? fmt(Math.round(live.usdIqd)) + ' د.ع' : '—'}</Text>
+              <Text style={[styles.indicatorSub, textSecondaryStyle]}>مصدر عالمي؛ أسعار المصارف والسوق تختلف</Text>
             </GlassCard>
           </View>
         )}
@@ -128,10 +141,12 @@ export const ServicesHubScreen = ({ onAskAI }) => {
                 <Text style={[styles.goldTitle, { color: isDarkMode ? 'white' : '#78350F' }]}>بورصة الذهب العراقي عيار 21</Text>
               </View>
               <View style={styles.goldPriceRow}>
-                <Text style={[styles.goldPriceText, { color: isDarkMode ? 'white' : '#78350F' }]}>485,000 دينار عراقي</Text>
+                <Text style={[styles.goldPriceText, { color: isDarkMode ? 'white' : '#78350F' }]}>
+                  {live?.gold21Mithqal ? fmt(live.gold21Mithqal) + ' دينار عراقي' : '—'}
+                </Text>
                 <Text style={[styles.goldUnitText, { color: isDarkMode ? '#FFECB3' : '#78350F' }]}>للمثقال الواحد</Text>
               </View>
-              <Text style={[styles.goldSub, { color: isDarkMode ? '#FFECB3' : '#78350F' }]}>📈 آخر تحديث: مباشر من أسواق العراق المحلية</Text>
+              <Text style={[styles.goldSub, { color: isDarkMode ? '#FFECB3' : '#78350F' }]}>📈 تقدير محسوب من السعر العالمي للأونصة بلا أجور صياغة • {updated}</Text>
             </LinearGradient>
           </View>
         )}
@@ -157,10 +172,19 @@ export const ServicesHubScreen = ({ onAskAI }) => {
                       </Text>
                     </View>
                     <TouchableOpacity
-                      onPress={() => {
-                        removeChronicMedication(med.id);
-                        Alert.alert('تم الحذف', 'تم إيقاف جدولة تنبيهات العلاج.');
-                      }}
+                      onPress={() =>
+                        Alert.alert('حذف العلاج', 'هل تريد حذف ' + med.medName + ' وإيقاف تذكيراته؟', [
+                          { text: 'إلغاء', style: 'cancel' },
+                          {
+                            text: 'حذف',
+                            style: 'destructive',
+                            onPress: async () => {
+                              await removeChronicMedication(med.id);
+                              Alert.alert('تم الحذف', 'تم إيقاف جدولة تنبيهات العلاج.');
+                            },
+                          },
+                        ])
+                      }
                       style={styles.trashBtn}
                     >
                       <Feather name="trash-2" size={14} color={theme.danger} />
@@ -204,8 +228,9 @@ export const ServicesHubScreen = ({ onAskAI }) => {
                     </TouchableOpacity>
                     {expandedChildId === child.id && (
                       <View style={[styles.vaccineTimeline, { backgroundColor: theme.background }]}>
-                        {child.scheduledDates.map((item, index) => {
-                          const isPast = new Date(item.date).getTime() < new Date().getTime();
+                        {(child.scheduledDates || []).map((item, index) => {
+                          // v1.1.0: a past date means the due date has passed, not that the dose was given.
+                          const isPast = new Date(item.date + 'T23:59:59').getTime() < new Date().getTime();
                           const statusColor = isPast ? theme.success : theme.warning;
                           const statusBg = isPast ? theme.success + '14' : theme.warning + '14';
                           return (
@@ -218,7 +243,7 @@ export const ServicesHubScreen = ({ onAskAI }) => {
                               </View>
                               <View style={[styles.statusBadge, { backgroundColor: statusBg }]}>
                                 <Text style={{ color: statusColor, fontSize: 9.5, fontWeight: 'bold' }}>
-                                  {isPast ? 'مكتمل' : 'قادم'}
+                                  {isPast ? 'مضى موعده' : 'قادم'}
                                 </Text>
                               </View>
                             </View>
@@ -245,28 +270,30 @@ export const ServicesHubScreen = ({ onAskAI }) => {
               <Feather name="layers" size={16} color={theme.textSecondary} style={{ marginLeft: 6 }} />
               <Text style={[styles.sectionCardTitle, textPrimaryStyle]}>أهم الخدمات</Text>
             </View>
+            {/* v1.1.0: v1.0.0 showed three invented statuses here ("تم الإيداع بنجاح"…).
+                These are now shortcuts that open the assistant on that service. */}
             <View style={styles.mockServicesList}>
-              <View style={[styles.mockServiceItem, { backgroundColor: theme.backgroundSecondary, borderColor: theme.border }]}>
-                <View style={styles.mockServiceLeft}>
-                  <Ionicons name="checkmark-circle" size={16} color={theme.success} />
-                  <Text style={[styles.mockServiceStatus, { color: theme.success }]}>تم الإيداع بنجاح</Text>
-                </View>
-                <Text style={[styles.mockServiceTitle, { color: theme.textPrimary }]}>صرف الراتب</Text>
-              </View>
-              <View style={[styles.mockServiceItem, { backgroundColor: theme.backgroundSecondary, borderColor: theme.border }]}>
-                <View style={styles.mockServiceLeft}>
-                  <Ionicons name="time" size={16} color={theme.primaryBrand} />
-                  <Text style={[styles.mockServiceStatus, { color: theme.primaryBrand }]}>قيد المعالجة</Text>
-                </View>
-                <Text style={[styles.mockServiceTitle, { color: theme.textPrimary }]}>معاملة جواز سفر</Text>
-              </View>
-              <View style={[styles.mockServiceItem, { backgroundColor: theme.backgroundSecondary, borderColor: theme.border }]}>
-                <View style={styles.mockServiceLeft}>
-                  <Ionicons name="checkmark-circle" size={16} color={theme.success} />
-                  <Text style={[styles.mockServiceStatus, { color: theme.success }]}>جاهز للاستلام</Text>
-                </View>
-                <Text style={[styles.mockServiceTitle, { color: theme.textPrimary }]}>تجديد البطاقة الوطنية</Text>
-              </View>
+              {[
+                { title: 'إصدار جواز سفر عراقي', icon: 'airplane', query: 'إصدار جواز سفر' },
+                { title: 'إصدار البطاقة الوطنية الموحدة', icon: 'card', query: 'البطاقة الوطنية' },
+                { title: 'إضافة مولود للبطاقة التموينية', icon: 'basket', query: 'إضافة مولود للبطاقة التموينية' },
+              ].map((item) => (
+                <TouchableOpacity
+                  key={item.title}
+                  activeOpacity={0.8}
+                  onPress={() => onAskAI && onAskAI(item.query)}
+                  style={[styles.mockServiceItem, { backgroundColor: theme.backgroundSecondary, borderColor: theme.border }]}
+                >
+                  <View style={styles.mockServiceLeft}>
+                    <Feather name="chevron-left" size={16} color={theme.primaryBrand} />
+                    <Text style={[styles.mockServiceStatus, { color: theme.primaryBrand }]}>اسأل المساعد</Text>
+                  </View>
+                  <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 6 }}>
+                    <Ionicons name={item.icon} size={15} color={theme.textSecondary} />
+                    <Text style={[styles.mockServiceTitle, { color: theme.textPrimary }]}>{item.title}</Text>
+                  </View>
+                </TouchableOpacity>
+              ))}
             </View>
           </GlassCard>
         )}

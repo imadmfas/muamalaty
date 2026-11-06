@@ -48,12 +48,8 @@ export const FamilyScreen = () => {
   const [headBirthDate, setHeadBirthDate] = useState(familyHead?.birthDate || '');
   const [headNidNumber, setHeadNidNumber] = useState(familyHead?.nidNumber || '');
   const [headNidExpiry, setHeadNidExpiry] = useState(familyHead?.nidExpiryDate || '');
-  // NOTE: setter is never used in the original bytecode (no input for passport number)
-  // eslint-disable-next-line no-unused-vars
   const [headPassportNumber, setHeadPassportNumber] = useState(familyHead?.passportNumber || '');
   const [headPassportExpiry, setHeadPassportExpiry] = useState(familyHead?.passportExpiryDate || '');
-  // NOTE: setter is never used in the original bytecode (no input for housing number)
-  // eslint-disable-next-line no-unused-vars
   const [headHousingNumber, setHeadHousingNumber] = useState(familyHead?.housingNumber || '');
   const [headHousingExpiry, setHeadHousingExpiry] = useState(familyHead?.housingExpiryDate || '');
 
@@ -114,10 +110,22 @@ export const FamilyScreen = () => {
 
   const handleToggleBiometrics = async () => {
     if (biometricLockEnabled) {
+      if (!(await securityService.authenticateBiometric())) {
+        Alert.alert('تعذر التحقق', 'لإلغاء القفل البيومتري أكّد هويتك بالبصمة، أو ألغِه من الإعدادات برمز الـ PIN.');
+        return;
+      }
       await securityService.setBiometricEnabled(false);
       await setSecurityEnabled(useAppStore.getState().pinLockEnabled, false);
       Alert.alert('تم الإلغاء', 'تم إلغاء القفل البيومتري لبيانات العائلة.');
     } else {
+      if (!(await securityService.isBiometricAvailable())) {
+        Alert.alert('غير متاح', 'البصمة غير متاحة على هذا الجهاز أو في نسخة المتصفح. يمكنك حماية بياناتك برمز PIN من الإعدادات.');
+        return;
+      }
+      if (!(await securityService.hasPIN())) {
+        Alert.alert('أنشئ رمز PIN أولاً', 'فعّل القفل برمز PIN من الإعدادات أولاً ليكون بديلاً عند تعذر قراءة البصمة.');
+        return;
+      }
       const success = await securityService.authenticateBiometric();
       if (!success) {
         Alert.alert('فشل التفعيل', 'لم نتمكن من تأكيد الهوية البيومترية لجهازك.');
@@ -136,14 +144,15 @@ export const FamilyScreen = () => {
     await saveFamilyHead({
       name: headName,
       birthDate: headBirthDate,
-      nidNumber: headNidNumber || '1234567890',
-      nidIssueDate: '2020-01-01',
+      // v1.1.0: no more fake placeholder numbers/dates saved as if they were real data.
+      nidNumber: headNidNumber.trim(),
+      nidIssueDate: familyHead?.nidIssueDate || '',
       nidExpiryDate: headNidExpiry,
-      passportNumber: headPassportNumber || 'A00000000',
-      passportIssueDate: '2020-01-01',
+      passportNumber: headPassportNumber.trim(),
+      passportIssueDate: familyHead?.passportIssueDate || '',
       passportExpiryDate: headPassportExpiry,
-      housingNumber: headHousingNumber || '12345',
-      housingIssueDate: '2020-01-01',
+      housingNumber: headHousingNumber.trim(),
+      housingIssueDate: familyHead?.housingIssueDate || '',
       housingExpiryDate: headHousingExpiry,
     });
     setIsEditingHead(false);
@@ -295,12 +304,34 @@ export const FamilyScreen = () => {
                 onChange={setHeadNidExpiry}
                 placeholder="اختر تاريخ انتهاء البطاقة الوطنية"
               />
+              <View style={styles.formGroup}>
+                <Text style={[styles.label, textPrimaryStyle]}>رقم جواز السفر (اختياري):</Text>
+                <TextInput
+                  style={[styles.input, inputThemeStyle]}
+                  value={headPassportNumber}
+                  onChangeText={setHeadPassportNumber}
+                  placeholder="مثال: A12345678"
+                  placeholderTextColor={theme.textMuted}
+                  autoCapitalize="characters"
+                />
+              </View>
               <DatePicker
                 label="تاريخ انتهاء جواز السفر العراقي:"
                 value={headPassportExpiry}
                 onChange={setHeadPassportExpiry}
                 placeholder="اختر تاريخ انتهاء جواز السفر"
               />
+              <View style={styles.formGroup}>
+                <Text style={[styles.label, textPrimaryStyle]}>رقم بطاقة السكن (اختياري):</Text>
+                <TextInput
+                  style={[styles.input, inputThemeStyle]}
+                  value={headHousingNumber}
+                  onChangeText={setHeadHousingNumber}
+                  placeholder="مثال: 123456"
+                  placeholderTextColor={theme.textMuted}
+                  keyboardType="number-pad"
+                />
+              </View>
               <DatePicker
                 label="تاريخ انتهاء بطاقة السكن العائلية:"
                 value={headHousingExpiry}
@@ -487,10 +518,19 @@ export const FamilyScreen = () => {
                     </Text>
                   </View>
                   <TouchableOpacity
-                    onPress={() => {
-                      removeChronicMedication(med.id);
-                      Alert.alert('تم الحذف', 'تم إيقاف تذكيرات هذا العلاج.');
-                    }}
+                    onPress={() =>
+                      Alert.alert('حذف العلاج', 'هل تريد حذف ' + med.medName + ' وإيقاف تذكيراته؟', [
+                        { text: 'إلغاء', style: 'cancel' },
+                        {
+                          text: 'حذف',
+                          style: 'destructive',
+                          onPress: async () => {
+                            await removeChronicMedication(med.id);
+                            Alert.alert('تم الحذف', 'تم إيقاف تذكيرات هذا العلاج.');
+                          },
+                        },
+                      ])
+                    }
                     style={styles.trashBtn}
                   >
                     <Feather name="trash-2" size={14} color={theme.danger} />
@@ -569,7 +609,12 @@ export const FamilyScreen = () => {
                   style={[styles.memberCard, { backgroundColor: cardMain }]}
                 >
                   <View style={styles.memberHeader}>
-                    <TouchableOpacity onPress={() => removeFamilyMember(member.id)}>
+                    <TouchableOpacity onPress={() =>
+                      Alert.alert('حذف فرد من العائلة', 'هل تريد حذف ' + member.name + ' وإلغاء تذكيراته؟', [
+                        { text: 'إلغاء', style: 'cancel' },
+                        { text: 'حذف', style: 'destructive', onPress: () => removeFamilyMember(member.id) },
+                      ])
+                    }>
                       <Text style={styles.deleteMemberText}>🗑️ إزالة الفرد</Text>
                     </TouchableOpacity>
                     <View style={styles.memberInfo}>

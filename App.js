@@ -9,6 +9,8 @@ import {
   Animated,
   Keyboard,
   Alert,
+  Platform,
+  ActivityIndicator,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { Feather } from '@expo/vector-icons';
@@ -23,9 +25,19 @@ import { ProfileScreen } from './src/screens/ProfileScreen';
 import { AdminScreen } from './src/screens/AdminScreen';
 import { GlassCard } from './src/components/GlassCard';
 import * as securityService from './src/services/securityService';
+import { WebAlertHost } from './src/components/WebAlertHost';
 
 export default function App() {
-  const { isLocked, unlockApp, pinLockEnabled, biometricLockEnabled, loadPersistedData } = useAppStore();
+  return (
+    <View style={{ flex: 1 }}>
+      <AppContent />
+      <WebAlertHost />
+    </View>
+  );
+}
+
+function AppContent() {
+  const { isLocked, unlockApp, pinLockEnabled, biometricLockEnabled, loadPersistedData, isHydrated } = useAppStore();
   const { theme, isDarkMode, themeConfig } = useTheme();
 
   const [activeTab, setActiveTab] = useState('home');
@@ -33,13 +45,18 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [pinInput, setPinInput] = useState('');
   const [pinError, setPinError] = useState(false);
+  const [lockedUntil, setLockedUntil] = useState(0);
+  const [, forceTick] = useState(0);
 
   const keyboardHeight = React.useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
+    // v1.1.0: the test helper that silently created PIN "1234" on every launch was removed.
     loadPersistedData();
-    setupDefaultPINForTest();
+    securityService.getPinLockout().then(({ lockedUntil: until }) => setLockedUntil(until));
 
+    // v1.1.0: the nav bar now slides away while the keyboard is open (the v1.0.0
+    // interpolation mapped every keyboard height to 0, so the bar covered the chat input).
     const showSub = Keyboard.addListener('keyboardDidShow', (e) => {
       Animated.timing(keyboardHeight, {
         toValue: e.endCoordinates.height,
@@ -47,7 +64,7 @@ export default function App() {
         useNativeDriver: true,
       }).start();
     });
-    const hideSub = Keyboard.addListener('keyboardDidHide', (e) => {
+    const hideSub = Keyboard.addListener('keyboardDidHide', () => {
       Animated.timing(keyboardHeight, {
         toValue: 0,
         duration: 250,
@@ -67,12 +84,15 @@ export default function App() {
     }
   }, [isLocked, biometricLockEnabled]);
 
-  const setupDefaultPINForTest = async () => {
-    const hasPin = await securityService.hasPIN();
-    if (!hasPin) {
-      await securityService.savePIN('1234');
-    }
-  };
+  // Countdown refresh while the keypad is temporarily blocked after too many wrong PINs.
+  useEffect(() => {
+    if (!lockedUntil) return;
+    const t = setInterval(() => {
+      if (Date.now() >= lockedUntil) setLockedUntil(0);
+      forceTick((n) => n + 1);
+    }, 1000);
+    return () => clearInterval(t);
+  }, [lockedUntil]);
 
   const handleBiometricUnlock = async () => {
     const success = await securityService.authenticateBiometric();
@@ -86,6 +106,7 @@ export default function App() {
   // NOTE: in the compiled bundle this function body is empty; Hermes inlined its
   // logic into the keypad onPress handler. Reconstructed here as the original helper.
   const handleKeyPress = (key) => {
+    if (lockedUntil && Date.now() < lockedUntil) return;
     setPinError(false);
     if (pinInput.length < 4) {
       const newPin = pinInput + key;
@@ -99,13 +120,20 @@ export default function App() {
   const handlePinSubmit = async (pin) => {
     const isValid = await securityService.verifyPIN(pin);
     if (isValid) {
+      await securityService.resetPinAttempts();
       unlockApp();
       setPinInput('');
       setPinError(false);
     } else {
       setPinError(true);
       setPinInput('');
-      Alert.alert('رمز خاطئ', 'رمز الـ PIN الذي أدخلته غير صحيح. يرجى المحاولة مرة ثانية (الافتراضي: 1234)');
+      const { lockedUntil: until, remaining } = await securityService.registerFailedPinAttempt();
+      if (until) {
+        setLockedUntil(until);
+        Alert.alert('محاولات كثيرة', 'أدخلت رمزاً خاطئاً عدة مرات. أُوقف الإدخال مؤقتاً حفاظاً على أمان بياناتك.');
+      } else {
+        Alert.alert('رمز خاطئ', `رمز الـ PIN الذي أدخلته غير صحيح. المحاولات المتبقية قبل الإيقاف المؤقت: ${remaining}`);
+      }
     }
   };
 
@@ -113,6 +141,27 @@ export default function App() {
   const handleBackspace = () => {
     setPinInput((prev) => prev.slice(0, -1));
   };
+
+  // Web: allow typing the PIN on a physical keyboard.
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !isLocked || typeof window === 'undefined') return undefined;
+    const onKey = (e) => {
+      if (/^[0-9]$/.test(e.key)) handleKeyPress(e.key);
+      else if (e.key === 'Backspace') handleBackspace();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  });
+
+  if (!isHydrated) {
+    return (
+      <View style={[styles.lockContainer, { backgroundColor: theme.background }]}>
+        <ActivityIndicator color={theme.primaryBrand} />
+      </View>
+    );
+  }
+
+  const secondsLeft = lockedUntil ? Math.max(0, Math.ceil((lockedUntil - Date.now()) / 1000)) : 0;
 
   if (isLocked && (pinLockEnabled || biometricLockEnabled)) {
     return (
@@ -132,8 +181,13 @@ export default function App() {
           <Feather name="lock" size={24} color={theme.primaryBrand} style={{ marginBottom: 12 }} />
           <Text style={[styles.lockTitle, { color: theme.textPrimary }]}>تطبيق معاملاتي مؤمن</Text>
           <Text style={[styles.lockSub, { color: theme.textSecondary }]}>
-            يرجى إلغاء القفل بالبصمة أو إدخال رمز الـ PIN (الافتراضي: 1234)
+            {biometricLockEnabled ? 'يرجى إلغاء القفل بالبصمة أو إدخال رمز الـ PIN' : 'يرجى إدخال رمز الـ PIN لفتح التطبيق'}
           </Text>
+          {secondsLeft > 0 && (
+            <Text style={[styles.lockSub, { color: theme.danger, marginTop: -12 }]}>
+              الإدخال موقوف مؤقتاً، حاول بعد {secondsLeft} ثانية
+            </Text>
+          )}
 
           <View style={styles.dotsRow}>
             {[0, 1, 2, 3].map((i) => (
@@ -244,7 +298,7 @@ export default function App() {
   ];
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]}>
+    <SafeAreaView style={[styles.container, { backgroundColor: theme.background }, Platform.OS === 'web' && styles.webFrame]}>
       <StatusBar style={isDarkMode ? 'light' : 'dark'} />
       <View style={styles.screenArea}>
         {showAdmin ? <AdminScreen onClose={() => setShowAdmin(false)} /> : renderScreen()}
@@ -259,7 +313,7 @@ export default function App() {
                 {
                   translateY: keyboardHeight.interpolate({
                     inputRange: [0, 1000],
-                    outputRange: [0, 0],
+                    outputRange: [0, 1000],
                   }),
                 },
               ],
@@ -313,6 +367,13 @@ const styles = StyleSheet.create({
   },
   screenArea: {
     flex: 1,
+  },
+  // Web: keep the phone layout readable on wide desktop screens.
+  webFrame: {
+    width: '100%',
+    maxWidth: 520,
+    alignSelf: 'center',
+    paddingTop: 0,
   },
   navBarWrapper: {
     position: 'absolute',
@@ -422,6 +483,7 @@ const styles = StyleSheet.create({
   },
   keypadRow: {
     flexDirection: 'row',
+    direction: 'ltr', // phone keypads read 1-2-3 left to right even in RTL layouts
     justifyContent: 'center',
     gap: 16,
   },

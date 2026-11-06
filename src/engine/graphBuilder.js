@@ -53,7 +53,7 @@ export class ProceduralGraphBuilder {
         lastVerifiedDate: service.last_verified_date || new Date().toISOString().split('T')[0],
       });
 
-      service.required_documents.forEach((docText, index) => {
+      (service.required_documents || []).forEach((docText, index) => {
         const docType = this.mapDocumentTextToType(docText);
         if (docType) {
           const docId = `doc_${docType}`;
@@ -64,7 +64,7 @@ export class ProceduralGraphBuilder {
         }
       });
 
-      service.eligibility_conditions.forEach((conditionText, index) => {
+      (service.eligibility_conditions || []).forEach((conditionText, index) => {
         const conditionId = `cond_${service.service_id}_${index}`;
         const conditionNode = {
           id: conditionId,
@@ -73,11 +73,17 @@ export class ProceduralGraphBuilder {
           isValid: true,
         };
 
-        if (conditionText.includes('سن') || conditionText.includes('عمر')) {
+        // v1.1.0 fix: v1.0.0 matched the substring 'سن' (found in many words) and treated
+        // every number as a MINIMUM age, so "موافقة ولي الأمر لمن هم دون سن 18" made
+        // passport issue impossible for minors. Only explicit minimum-age wording is enforced;
+        // "دون/أقل من/تحت" conditions describe extra paperwork, not a ban.
+        const mentionsAge = /(^|[\s(،,])(ال)?(سن|عمر)([\s)،,.:]|$)/.test(conditionText);
+        const isUpperBound = /(دون|أقل من|اقل من|تحت)\s*(ال)?(سن|عمر)?/.test(conditionText);
+        if (mentionsAge && !isUpperBound) {
           const match = conditionText.match(/\d+/);
           if (match) {
-            conditionNode.ageRequirement = parseInt(match[0]);
-            if (input.userAge !== undefined) {
+            conditionNode.ageRequirement = parseInt(match[0], 10);
+            if (typeof input.userAge === 'number' && !Number.isNaN(input.userAge)) {
               conditionNode.isValid = input.userAge >= conditionNode.ageRequirement;
             }
           }

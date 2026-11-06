@@ -12,6 +12,7 @@ import {
   Linking,
   Alert,
   Share,
+  Platform,
 } from "react-native";
 import { Feather, Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
@@ -22,7 +23,22 @@ import {
   verifyServiceDetails,
   getConfidenceColor,
   getConfidenceText,
+  checkInternetConnection,
 } from "../services/verificationService";
+
+// v1.1.0: messages use **bold** markers; v1.0.0 printed the asterisks literally.
+const renderRichText = (text) =>
+  String(text ?? "")
+    .split(/(\*\*[^*]+\*\*)/g)
+    .map((part, i) =>
+      part.startsWith("**") && part.endsWith("**") ? (
+        <Text key={i} style={{ fontWeight: "bold" }}>
+          {part.slice(2, -2)}
+        </Text>
+      ) : (
+        part
+      ),
+    );
 import { GlassCard } from "../components/GlassCard";
 import { SkeletonLoader } from "../components/SkeletonLoader";
 import { StoreAdapter } from "../engine/index";
@@ -206,9 +222,7 @@ export const ChatScreen = ({ initialQuery, clearInitialQuery }) => {
   }, []);
 
   const checkActiveNetwork = async () => {
-    const online = await fetch("https://eservice.ur.gov.iq", { method: "HEAD" })
-      .then(() => true)
-      .catch(() => false);
+    const online = await checkInternetConnection();
     setIsOnline(online);
     Animated.timing(networkAnim, {
       toValue: online ? 0 : 1,
@@ -348,35 +362,18 @@ export const ChatScreen = ({ initialQuery, clearInitialQuery }) => {
 
   const executeVerificationPipeline = async (service, governorate) => {
     try {
-      setLoadingStatus("جاري فحص اتصال الإنترنت والتحقق...");
-      await new Promise((resolve) => setTimeout(resolve, 600));
-
-      const online = await fetch("https://eservice.ur.gov.iq", {
-        method: "HEAD",
-      })
-        .then(() => true)
-        .catch(() => false);
+      // v1.1.0: no more fake "pulling data from official portals" steps — the app has no
+      // live government API. It checks connectivity (for the map/portal links) and reads
+      // the curated service record; the messages now say exactly that.
+      setLoadingStatus("جاري تجهيز بيانات المعاملة ومطابقتها مع محافظتك...");
+      const online = await checkInternetConnection();
       setIsOnline(online);
-
-      if (online) {
-        setLoadingStatus(
-          "تم الاتصال! جاري سحب البيانات من البوابات الرسمية ومقارنتها...",
-        );
-        await new Promise((resolve) => setTimeout(resolve, 800));
-        setLoadingStatus(
-          "جاري مطابقة مصادر: بوابة أور 🔗، مديريات وزارة الداخلية والمالية 🔗...",
-        );
-        await new Promise((resolve) => setTimeout(resolve, 800));
-        setLoadingStatus(
-          "جاري تحديث كاش التطبيق وتأكيد الرسوم والدائرة المختصة...",
-        );
-        await new Promise((resolve) => setTimeout(resolve, 600));
-      } else {
-        setLoadingStatus(
-          "لا يوجد إنترنت! جاري تفعيل وضع دون اتصال (Offline Fallback)...",
-        );
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-      }
+      Animated.timing(networkAnim, {
+        toValue: online ? 0 : 1,
+        duration: 500,
+        useNativeDriver: false,
+      }).start();
+      await new Promise((resolve) => setTimeout(resolve, 500));
 
       const verification = await verifyServiceDetails(service, online);
 
@@ -390,11 +387,11 @@ export const ChatScreen = ({ initialQuery, clearInitialQuery }) => {
       setIsTyping(false);
       setLoadingStatus("");
 
-      let responseText = `لقيتلك كافة المتمتلكات والإجراءات الخاصة بـ **${serviceResult.service_name_ar}** لمحافظة **${governorate}** عيني.`;
+      let responseText = `لقيتلك كافة المستمسكات والإجراءات الخاصة بـ **${serviceResult.service_name_ar}** لمحافظة **${governorate}** عيني.`;
       if (verification.isOffline) {
         responseText =
           responseText +
-          "\n⚠️ (تم الاسترداد من قاعدة البيانات المحلية المحفوظة لعدم توفر اتصال بالإنترنت).";
+          "\n⚠️ أنت غير متصل بالإنترنت الآن؛ المعلومات من قاعدة التطبيق المحفوظة، وروابط الخرائط والبوابة تحتاج اتصالاً.";
       }
 
       addMessage({
@@ -416,6 +413,7 @@ export const ChatScreen = ({ initialQuery, clearInitialQuery }) => {
         text: "عذراً عيني، صار خطأ أثناء التحقق، سحبتلك المعلومات المخزنة محلياً.",
         serviceResult: service,
         confidenceScore: 65,
+        completedWizardSteps: [],
         sourceType: "local_database",
         isOffline: true,
       });
@@ -436,23 +434,33 @@ export const ChatScreen = ({ initialQuery, clearInitialQuery }) => {
   };
 
   const handleShare = async (service) => {
-    const docsList = service.required_documents
-      .map((doc, index) => `${index + 1}. ${doc}`)
-      .join("\n");
-    const message =
-      "\n*تطبيق معاملاتي - دليل المعاملات الحكومية*\nالخدمة: " +
-      service.service_name_ar +
-      "\nالوزارة: " +
-      service.ministry_name +
-      "\nالرسوم التقريبية: " +
-      service.estimated_fees_iqd.toLocaleString() +
-      " دينار عراقي\nالمستمسكات المطلوبة:\n" +
-      docsList +
-      "\n    ";
     try {
+      const docsList = (service.required_documents || [])
+        .map((doc, index) => `${index + 1}. ${doc}`)
+        .join("\n");
+      const fee = Number(service.estimated_fees_iqd);
+      const message =
+        "*تطبيق معاملاتي - دليل المعاملات الحكومية*\nالخدمة: " +
+        service.service_name_ar +
+        "\nالوزارة: " +
+        (service.ministry_name || "—") +
+        "\nالرسوم التقريبية: " +
+        (fee > 0 ? fee.toLocaleString("en-US") + " دينار عراقي" : "مجانية أو غير محددة") +
+        "\nالمستمسكات المطلوبة:\n" +
+        docsList +
+        "\n\nhttps://imadmfas.github.io/muamalaty/";
+      if (Platform.OS === "web") {
+        if (navigator.share) {
+          await navigator.share({ title: service.service_name_ar, text: message });
+        } else {
+          await navigator.clipboard.writeText(message);
+          Alert.alert("تم النسخ", "نُسخت تفاصيل المعاملة، يمكنك لصقها في واتساب أو أي تطبيق.");
+        }
+        return;
+      }
       await Share.share({ message, title: service.service_name_ar });
     } catch (error) {
-      Alert.alert("خطأ", "فشل مشاركة البيانات");
+      if (error?.name !== "AbortError") Alert.alert("خطأ", "فشل مشاركة البيانات");
     }
   };
 
@@ -619,7 +627,7 @@ export const ChatScreen = ({ initialQuery, clearInitialQuery }) => {
                     )}
                   </>
 
-                  {msg.confidenceScore && msg.confidenceScore < 50 && (
+                  {typeof msg.confidenceScore === "number" && msg.confidenceScore < 50 && (
                     <View
                       style={[
                         styles.uncertainBanner,
@@ -713,7 +721,7 @@ export const ChatScreen = ({ initialQuery, clearInitialQuery }) => {
                     </View>
                     <Text style={[styles.feeText, textPrimaryStyle]}>
                       {msg.serviceResult.estimated_fees_iqd > 0
-                        ? `${msg.serviceResult.estimated_fees_iqd.toLocaleString()} دينار عراقي`
+                        ? `${Number(msg.serviceResult.estimated_fees_iqd || 0).toLocaleString("en-US")} دينار عراقي`
                         : "مجانية بالكامل"}
                     </Text>
                     <Text style={[styles.paymentMethod, textSecondaryStyle]}>
@@ -1096,7 +1104,7 @@ export const ChatScreen = ({ initialQuery, clearInitialQuery }) => {
                         },
                       ]}
                     >
-                      {msg.text}
+                      {renderRichText(msg.text)}
                     </Text>
 
                     {resultCard}
@@ -1197,6 +1205,8 @@ export const ChatScreen = ({ initialQuery, clearInitialQuery }) => {
               onSubmitEditing={() => handleUserSubmit(inputText)}
               editable={!isTyping}
               multiline={true}
+              // v1.1.0: Enter sends on the web/keyboard (Shift+Enter still adds a new line).
+              {...(Platform.OS === "web" ? { blurOnSubmit: true, submitBehavior: "submit" } : {})}
             />
             <TouchableOpacity
               style={[

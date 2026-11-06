@@ -45,11 +45,20 @@ export class PathFinder {
         }
 
         missingDocs.push(sourceNode.id);
-        for (const producerId of DOCUMENT_PRODUCERS[sourceNode.id] || []) {
-          if (graph.getNode(producerId)) {
-            dependencyEdges.push({ from: producerId, to: serviceId });
-            resolveDependencies(producerId);
-          }
+        const producers = DOCUMENT_PRODUCERS[sourceNode.id] || [];
+        // v1.1.0 fix: a renewal/update service consumes the old document it renews, so it
+        // is not its own prerequisite (v1.0.0 turned this into a cycle and rejected every
+        // renewal path).
+        if (producers.includes(serviceId)) {
+          continue;
+        }
+        // v1.1.0 fix: add ONE producer, not all of them. The document exists but is expired,
+        // so renewing/updating it (producers[1]) is the right step; issuing a brand-new one
+        // (producers[0]) is only the fallback. v1.0.0 added both, doubling the time.
+        const producerId = [producers[1], producers[0]].find((id) => id && graph.getNode(id));
+        if (producerId) {
+          dependencyEdges.push({ from: producerId, to: serviceId });
+          resolveDependencies(producerId);
         }
       }
     };
@@ -62,10 +71,11 @@ export class PathFinder {
       let duration =
         ENGINE_CONFIG.STEP_DURATION_ESTIMATES[shortId] ||
         ENGINE_CONFIG.STEP_DURATION_ESTIMATES.default_step;
-      const wait =
-        node.bookingRequired && channel === 'digital'
-          ? ENGINE_CONFIG.STEP_WAIT_ESTIMATES.appointment_needed
-          : ENGINE_CONFIG.STEP_WAIT_ESTIMATES.normal_wait;
+      // v1.1.0 fix: an appointment is needed whatever the channel; v1.0.0 charged the
+      // appointment wait only on the digital path, which made "digital-first" the slowest.
+      const wait = node.bookingRequired
+        ? ENGINE_CONFIG.STEP_WAIT_ESTIMATES.appointment_needed
+        : ENGINE_CONFIG.STEP_WAIT_ESTIMATES.normal_wait;
       duration = duration + wait;
       const probability = ENGINE_CONFIG.ELIGIBILITY_PROBABILITIES.has_all_required_docs;
       const requiredDocs = graph
@@ -230,6 +240,10 @@ export class ConstraintSolver {
               continue;
             }
 
+            // The renewal step itself accepts the old (expired) document.
+            if (this.getProducedDocuments(serviceId).includes(docNode.id)) {
+              continue;
+            }
             const wasRenewed = renewedDocs.has(docNode.id);
             const isDocValid = docNode.isValid === true;
 
@@ -336,6 +350,8 @@ export class ConstraintSolver {
           continue;
         }
         for (const producerId of DOCUMENT_PRODUCERS[sourceNode.id] || []) {
+          // A service renewing the document it consumes is not a cycle.
+          if (producerId === serviceId) continue;
           if (stepServiceIds.has(producerId) && dfs(producerId)) {
             return true;
           }

@@ -125,7 +125,7 @@ export const AdminScreen = ({ onClose }) => {
     setNewMinistry('');
     setNewFees('');
     setNewDocs('');
-    Alert.alert('نجاح', 'تمت إضافة الخدمة الحكومية الجديدة لقاعدة البيانات بنجاح!');
+    Alert.alert('أضيفت للمعاينة', 'أضيفت الخدمة إلى قائمة هذه الجلسة للمعاينة فقط؛ لا تُحفظ دائماً ولا تظهر لبقية المستخدمين. التعديل الدائم يكون في ملف src/data/servicesData.js.');
   };
 
   const cardBackground = theme.cardMain;
@@ -219,7 +219,7 @@ export const AdminScreen = ({ onClose }) => {
               onPress={handleCreateService}
             >
               <Text style={[styles.addBtnText, { color: isDarkMode ? theme.background : 'white' }]}>
-                💾 حفظ وإضافة لقاعدة البيانات
+                ➕ إضافة للمعاينة في هذه الجلسة
               </Text>
             </TouchableOpacity>
           </View>
